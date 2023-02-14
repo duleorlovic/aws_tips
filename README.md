@@ -519,7 +519,8 @@ Default load balancing algorithm is round robin, which distrubutes each requests
 in turn. Another is LOR least outstanding requests, next instance is the
 instance with the lowest number of pending/unfinished requests. Can not be used
 with "Slow start duration" ex 30 seconds newly created instances receives 1,
-than 2, then 3 requests (not a bunch of them in first second).
+than 2, then 3 requests (not a bunch of them in first second) Slow start mode is
+defined on Target Group.
 For apps that store session info locally, you can enable Sticky Sessions so ALB
 will send to the same target (it can generate inbalanced load). Application
 based: Cookie name is AWSALBAPP (or custom cookie when target generate the
@@ -551,6 +552,11 @@ CNAME that points to ALB ex: mylb-1386560557.us-east-1.elb.amazonaws.com
 
 Connection draining is Time to complete "in-flight requests" while the instance
 is de-regestering or unhealthy. Default is 300 seconds (5min). You can set 30s
+if you have ready-to-use AMI. During this cooldown deregistration period ASG
+will not launch or terminate additional instances to allow for metrics to
+stabilize.
+Y/ou can use ASG Lifecycle Hooks to pause ec2 instance in the terminating state
+for troubleshooting.
 
 New requests are send to other healthy instances. All healthy statuses are:
 * initial: registering the target
@@ -560,7 +566,7 @@ New requests are send to other healthy instances. All healthy statuses are:
 * draining: de-registering the target
 * unavailable: health check disabled
 
-TG healt check: if Target group contains only unhealthy targets, ELB routes
+TG health check: if Target group contains only unhealthy targets, ELB routes
 requests across it's unhealthy targets since it assume that health check is
 wrong. `HealthyThresholdCount` default 5 and `UnhealthyThresholdCount` default
 2 is how many checks every `HealthCheckIntervalSeconds` consecutive (in a row)
@@ -601,7 +607,8 @@ ClodWatch metrics:
 * RequestCountPerTarget
 * SurgeQueueLength: number of pending requests, routing to healthy instance (max
   is 1024)
-* SpilloverCount: number of rejected requests because the surge queue is full
+* SpilloverCount: number of rejected requests because the surge queue is full,
+  to prevent this error you can monitor for `SurgeQueueLength` and auto scale
 
 You can trace single user in logs using custom header `X-Amzn-Trace-Id` and you
 might use for X-Ray
@@ -611,9 +618,34 @@ might use for X-Ray
 Auto scalling can be manual, dynamic (based on CloudWatch metrics and target
 value) and predictive (forecast for recurring cyclic patterns)
 
-When you create ASG you need to define Launch template LT first.
+When you create ASG you need to define Launch template LT first. LT can have
+multiple versions (default is used). LT can create on-demand and spot instances.
+LT supports placement groups capacity reservations, dedicated hosts and multiple
+instance types. LT can use T2 unlimited burst feature.:
+
 ASG Health check is using Health check grace period (default 300s 5min) so new
 instance will not be registered untill 5 minutes is passed.
+
+ASG can be: simple step scaling (when CW alarm is triggered, ex CPU > 70% than
+add 1 unit), target tracking (it will automatically create two CW alarms for
+scale in (AlarmLow, remove instances) and scale out (AlarmHigh, add instances),
+(scale up means using bigger instances, vertical scalling), scheduled (on known
+used pattern) and predictive scaling (forecast load based on history).
+
+Good metrics to scale on:
+* `CPUUtilization` average CPU utilization across your instances
+* `RequestCountPerTarget` stable number of requests per instance
+* `Average Network In/Out` for NLB
+Here are some ASG level metrics (enable on Auto Scaling group metrics
+collection on Monitoring tab):
+* `GroupMinSize`, `GroupMaxSize`
+* `GroupInServiceInstaces`, `GroupTitalInstances`
+
+Some reasons when scaling fails: reached MaximumCapacity, some LT dependency was
+deleted (security group, key pair). If ASG fails 24h it will be suspended
+administration suspension.
+
+AWS Auto Scaling Plans, similar to ASG, but as separate service.
 
 ## EC2 Image Builder
 
@@ -668,7 +700,7 @@ Ledger Systems of record, supply chain, registrations, banking transactions Amaz
 CloudWatch is a service for monitoring metrics and logs.
 Basic monitoring is collecting every 5 minutes, detailed monitoring is paid and
 it collects every 1 min.
-It includes: CPUUtilization (processing power), `NetworkIn`/`NetworkOut`,
+It includes: `CPUUtilization` (processing power), `NetworkIn`/`NetworkOut`,
 DiskReadOps/DiskWriteOps, DiskReadBytes/DiskWriteBytes (only when disk is
 attached, not for ebs), `CPUCreditUsage` 1 cpu running 100% for 1 minute.
 Status check metrics:
@@ -1288,10 +1320,21 @@ Etcd: key value store
 Worker nodes: Pod (group of one or more containers) similar to Task in ECS,
 created from PodSpec. Runtime (Docker or containerd), kube-proxy and kubelet
 
+# AWS Elastic beanstalk
+
+AWS Service catalog is to manage infrastructure as code (IaC) templates.
+AWS Elastic beanstalk is for deploys web applications.
+https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/ruby-rails-tutorial.html#ruby-rails-tutorial-launch
+Each Beanstalk environment will generate: ec2, ALB, S3, ASG, CW alarm,
+CloudFormation stack and domain name under 
+
 # AWS CloudFormation
 
-Use it to deplo to multiple AWS Regions quickly, automatically, and reliably.
+Use it to deploy to multiple AWS Regions quickly, automatically, and reliably.
 Use a template json file and create a stack.
+
+Download templates
+https://github.com/jsur/aws-cloudformation-udemy/tree/master/1-introduction
 
 Use StackSet to provision across multiple accounts and regions (for example
 deploy IAM role in each account).
@@ -1302,8 +1345,6 @@ Prevent updates to critical resources by using a Stack policy.
 
 Change set ...
 
-AWS Service catalog is to manage infrastructure as code (IaC) templates.
-AWS Elastic beanstalk is for deploys web applications.
 
 AWS LightSail Use pre-configured development stacks like LAMP, Nginx, MEAN, and
 Node.js. to get online quickly and easily.
