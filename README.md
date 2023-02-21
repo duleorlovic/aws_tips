@@ -801,6 +801,8 @@ export PEM_FILE=~/config/keys/pems/2022.pem
 export SERVER_IP=174.129.128.6
 ssh -i $PEM_FILE ubuntu@$SERVER_IP
 ssh -i $PEM_FILE ec2-user@$SERVER_IP
+
+curl $SERVER_IP
 ```
 
 ## SSM Run command
@@ -818,6 +820,12 @@ echo "hello from $(hostname -f)" > /var/www/html/index.html
 systemctl start httpd
 # automatically start on reboot
 systemctl enable httpd
+
+# on Amazon linux ami you should use service instead systemctl
+service httpd start
+
+# look for log on
+cat /var/log/cloud-init-output.log
 ```
 
 ## SSM Automation
@@ -856,7 +864,7 @@ https://us-east-1.console.aws.amazon.com/systems-manager/session-manager/prefere
 
 It is used for configurations.
 It stores passwords in plain text, so for passwords usually we use Secrets
-Manager and we can also access them through
+Manager and we can also access them through name
 `/aws/reference/secretsmanager/secret_ID_in_Secrets_Manager`
 We also have data like
 `/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x84_64-gp2` public
@@ -1326,7 +1334,7 @@ AWS Service catalog is to manage infrastructure as code (IaC) templates.
 AWS Elastic beanstalk is for deploys web applications.
 https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/ruby-rails-tutorial.html#ruby-rails-tutorial-launch
 Each Beanstalk environment will generate: ec2, ALB, S3, ASG, CW alarm,
-CloudFormation stack and domain name under 
+CloudFormation stack and domain name.
 
 # AWS CloudFormation
 
@@ -1336,11 +1344,116 @@ Use a template json file and create a stack.
 Download templates
 https://github.com/jsur/aws-cloudformation-udemy/tree/master/1-introduction
 
+```
+---
+Resources:
+  MyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: us-east-1a
+      ImageId: ami-a4c7edb2
+      InstanceType: t2.micro
+```
+You can upload template using cli `aws cloudformation create-stack help`
+for example
+```
+# create
+aws --profile 2022trk cloudformation create-stack --stack-name myteststack --template-body file://ec2.yml
+
+# list only CREATE_COMPLETE
+aws --profile 2022trk cloudformation list-stacks --stack-status-filter CREATE_COMPLETE
+
+# update
+aws --profile 2022trk cloudformation update-stack --stack-name myteststack --template-body file://ec2.yml
+
+# set parameter
+# --parameters ParameterKey=KeyName,ParameterValue=TestKey ParameterKey=SubnetIDs,ParameterValue=SubnetID1\\,SubnetID2
+```
+
+There are over 224 resource types, type identifiers is:
+`service-provider::service-name::data-type-name` for example
+`AWS::EC2::Instance`
+https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-instance.html
+
+Parameters can be: String, Number, CommaDelimitedList, List<Type>, AWS Parameter
+and it can contain Constraints, AllowedValues, AllowedPattern.
+```
+---
+Parameters:
+  SecurityGroupDescription:
+    Type: String
+    Description: Security Group Description
+```
+Use function `!Ref MyParameter` (or `Fn::Ref`). When we `!Ref` parameter then it
+returns paratemer value, and when we `!Ref` some resource then it returns
+physical ID of the underlying resource.
+You can `FN::GetAtt` to get attributes of the resources using dot syntax
+```
+NewVolume:
+  Properties:
+    AvailabilityZone:
+      !GetAtt EC2Instance.AvailabilityZone
+```
+
+You can create a string using join and delimiter
+```
+!Join [ ":", [ a, b, c ] ]
+# => "a:b:c"
+```
+Substitute values
+```
+!Sub
+  - String # which contains ${VariableName}
+  - { VariableName: VariableValue }
+```
+
+Pseudo parameters:
+- `AWS::AccountId` example value `123456789012`
+- `AWS::NotificationARNs` `{arn:aws:sns:us-east-!:123456789012:MyTopic}`
+- `AWS::Region` example `us-east-1`
+- `AWS::StackId` and `AWS::StackName`
+
+Mappings are fixed variables (region, az, ami, environment like dev/prod)
+```
+Mappings:
+  RegionMap:
+    us-east-1:
+      "32": "ami-a4c7edb2"
+      "64": "ami-a4c7edb2"
+```
+Syntax is `!FindInMap [ MapName, TopLevelKey, SecondLevelKey ]`
+Example use `!FindInMap [RegionMap, !Ref "AWS::Region", 32]`
+
+Outputs are used to link with other Stack (you can not delete a stack if its
+outputs are being referenced by another stack).
+
+```
+Outputs:
+  StackSSHSecurityGroup:
+    Value: !Ref MyCompanySSHSecurityGroup
+    Export:
+      Name: SSHSecurityGroup
+```
+Example usage is `!ImportValue SSHSecurityGroup`
+
+Conditions are used to create based on parameter value or mappings using logic
+functions: `!And`, `!Equals`, `!If`, `!Not`, `!Or`
+```
+Conditions:
+  CreateProdResources: !Equals [ !Ref EnvType, prod ]
+```
+Example usage is in the same level as `Type`
+```
+Resources:
+  MountPoint:
+    Type: "AWS::EC2::VolumeAttachment"
+    Condition: CreateProdResources
+```
+
 Use StackSet to provision across multiple accounts and regions (for example
 deploy IAM role in each account).
 
 Use `resource import` to bring existing resource to CloudFormation.
-
 Prevent updates to critical resources by using a Stack policy.
 
 Change set ...
