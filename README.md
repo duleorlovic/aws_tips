@@ -826,6 +826,9 @@ service httpd start
 
 # look for log on
 cat /var/log/cloud-init-output.log
+# if you are using AWS::Cloudformation::Init than it goes to
+cat /var/log/cfn-init.log
+cat /var/log/cfn-init-cmd.log
 ```
 
 ## SSM Automation
@@ -1358,16 +1361,21 @@ You can upload template using cli `aws cloudformation create-stack help`
 for example
 ```
 # create
-aws --profile 2022trk cloudformation create-stack --stack-name myteststack --template-body file://ec2.yml
+aws --profile 2022trk cloudformation create-stack --stack-name myteststack --template-body file://terraform/ec2.cloudformation.yml --parameters ParameterKey=KeyName,ParameterValue=2022
 
 # list only CREATE_COMPLETE
-aws --profile 2022trk cloudformation list-stacks --stack-status-filter CREATE_COMPLETE
+aws --profile 2022trk cloudformation list-stacks --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE
+
+# describe to find output
+export PEM_FILE=~/config/keys/pems/2022.pem
+export SERVER_IP=$(aws --profile 2022trk cloudformation describe-stacks --stack-name myteststack --query 'Stacks[0].Outputs[?OutputKey==`ServerIP`].OutputValue' --output text)
+ssh -i $PEM_FILE ec2-user@$SERVER_IP sudo cat /var/log/cloud-init-output.log
 
 # update
-aws --profile 2022trk cloudformation update-stack --stack-name myteststack --template-body file://ec2.yml
+aws --profile 2022trk cloudformation update-stack --stack-name myteststack --template-body file://terraform/ec2.cloudformation.yml --parameters ParameterKey=KeyName,ParameterValue=2022
 
-# set parameter
-# --parameters ParameterKey=KeyName,ParameterValue=TestKey ParameterKey=SubnetIDs,ParameterValue=SubnetID1\\,SubnetID2
+# destroy
+aws --profile 2022trk cloudformation delete-stack --stack-name myteststack
 ```
 
 There are over 224 resource types, type identifiers is:
@@ -1426,6 +1434,7 @@ Example use `!FindInMap [RegionMap, !Ref "AWS::Region", 32]`
 
 Outputs are used to link with other Stack (you can not delete a stack if its
 outputs are being referenced by another stack).
+You can find return values in docs https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-instance.html#aws-properties-ec2-instance-return-values
 
 ```
 Outputs:
@@ -1433,6 +1442,9 @@ Outputs:
     Value: !Ref MyCompanySSHSecurityGroup
     Export:
       Name: SSHSecurityGroup
+  ServerIP:
+    Description: Server IP address
+    Value: !GetAtt MyInstance.PublicIp
 ```
 Example usage is `!ImportValue SSHSecurityGroup`
 
