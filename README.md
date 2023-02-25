@@ -665,23 +665,127 @@ that since AZ are randomly enumerated by AWS).
 
 https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-volume-types.html
 Block storage (you can update part of if) is provided with Elastic Block Storage
-EBS (only one instance attached, or multi attach feature) instances has to be in
-same AZ. You can increase volume size till 16 TB or you can attach multiple EBS
-to single EC2 instance. To use on multiple instances you should use Elastic File
-System EFS.
+EBS (one instance attached, or multi attach feature) instances has to be in
+same AZ as volume. You can increase volume size till 16 TB or you can attach
+multiple EBS to single EC2 instance. To use on multiple instances you should use
+Elastic File System EFS.
 EBS is used as a root boot device launched from AMI.
+It is like USB stick but as network drive (not physically attached) so there are
+latency.
+Delete on Termination attribute is by default enabled for the first volume (if
+you want to preserve root volume you need to disable this).
+
 There are Provisioned SDD, General purpose SSD, and HDD volume type. You can
 make a backup using snapshot (they are incremental, save only what is changed).
-* Provisioned IOPS SSD  io1 is 50 IOPS per GB, up to 64.000
-  (expensive but very low latency, good for large databases) io2 500 per GB and
-  durability 99.999% instead of 99.9% (256.000 IOPS)
-* General puprose provisioned ssd gp2 gp3 3 IOPS per GB, up to 16.000 iops, for
-  smaller than 1TB, it can burst up to 3.000 IOPS (good for boot volumes, dev)
-* troughput optimized HDD (not ssd) st1 (low cost, up to 250 MB/s per TB, good
+* Provisioned IOPS SSD *io1* is 50 IOPS per GB, up to 64.000 for Nitro instances
+  (expensive but very low latency, good for large databases) *io2* 500 per GB
+  and durability 99.999% instead of 99.9% (256.000 IOPS)
+* General purpose provisioned ssd *gp2* *gp3*, 3 IOPS per GB for smaller than
+  1TB it can burst up to 3.000 IOPS (good for boot volumes)
+  max size 16 TB, and max IOPS is 16.000, and max troughput is 1000 MiB/s (gp3
+  throughput is independent of IOPS).
+* troughput optimized HDD (not ssd) *st1* (low cost, up to 250 MB/s per TB, good
   for big data, datawarehouse, log proccessing frequently accesses through
   intensive)
-* cold HDD sc1 up to 80 MB/s per TB, good for a fewer scans per day
+* cold HDD *sc1* up to 80 MB/s per TB, good for a fewer scans per day
 
+st1 and sc1 can not be used as boot volume, size from 125GB to 16 TB.
+io1 and io2 volume can use ebs multi-attach (attach to multiple machines) to
+achieve higher application avilability in clustered linux applications like
+Teradata (app must manage concurent write operations). Still inside one AZ.
+Multi attach limit is max to 16 instances.
+
+EC2 Instance Store is high performance hardware disk, directly attached to
+machine on which we run instance. It is ephemeral volume (lose on termination)
+so good for buffer, cache, scratch data and other temporary content
+Example is i3.large 100.000 IOPS, i3.16xlarge 3.300.000 IOPS.
+
+We can not decrease (only you can is to create new and copy)
+We can increase the EBS volume size (and IOPS for io1) but it will be in
+"optimisation" phase to be repartitioned.
+https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/recognize-expanded-volume-linux.html
+find hypervisor
+```
+aws --profile 2022trk ec2 describe-instance-types --instance-type t2.micro --query "InstanceTypes[].Hypervisor"
+[
+    "xen"
+]
+```
+then check the current size
+```
+lsblk
+NAME    MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
+xvda    202:0    0   8G  0 disk 
+└─xvda1 202:1    0   8G  0 part /
+
+df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/xvda1      8.0G  1.6G  6.4G  20% /
+
+```
+increase and you can see bigger size
+```
+lsblk
+NAME    MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
+xvda    202:0    0  10G  0 disk 
+└─xvda1 202:1    0   8G  0 part /
+```
+now you need to resize partition
+```
+sudo growpart /dev/xvda 1
+```
+so we can see bigger partition size, but still is not available untill we reboot
+```
+lsblk 
+NAME    MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
+xvda    202:0    0  10G  0 disk 
+└─xvda1 202:1    0  10G  0 part /
+
+df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/xvda1      8.0G  1.6G  6.4G  20% /
+```
+
+Amazon Data lifecycle management
+
+DLM is used to create and delete EBS snapshots automatically - scheduled.
+
+EBS snapshots are incremental backups, so only the blocks that have changed are
+saved.
+
+EBS Snaphosts - FSR Fast Snapshot Restore is used to prepare shapshot in each AZ
+that you want to restore the volume since it is much faster than pulling from S3
+
+EBS Snapshots - Archive: move to 75% cheaper, but restoring is 24 to 72 hours
+Recycle bin for snapshots, specify retention for deleted snapshots.
+
+To encrypt an unencrypted EBS volume you need to create snapshot, encrypt
+snapshot, create a new volume from it and attach it.
+
+
+Amazon EFS - Elastic File System
+
+This is managed NFS network file system that can be mount on many ec2, and those
+instances can be in any availability zone.
+You do not need to plan capacity, it can grow to Petabyte.
+1000s of concurent NFS clients, 10GB/s throughput.
+Performance mode: general purpose is latency sensitive, max I/O is higher
+latency (web), but better throughput and higly parallel (big data and media).
+Throughput mode: bursting 1TB = 50 MiB/s and burst to 100MB/s
+provisioned 1GiB/s for 1TB, and elastic.
+Storage tiels: standard, infrequent access EFS-IA cheaper to store, but
+expensive to access (we need to use Lifecycle Policy).
+EFS One zone IA is 90% saving since it is only in one AZ.
+
+EFS Access Points, restrict access to a directory based on IAM user.
+
+EFS Operations : lifecycle policy (enable IA), throughput mode. When coping you
+need to use AWS DataSync to keep attributes and metadata.
+
+EFS CloudWatch Metrics:
+- PercentIOLimit
+- BurstCreditBalance
+- StorageBytes
 
 ## AWS Databases
 
@@ -733,7 +837,7 @@ You can create alarm from EC2 instance -> right click -> Manage cloudwatch alarm
 Event bridge is serverless event bus used to build event driven apps.
 You can receive webhook on API Gateway which uses lambda to put event on
 EventBridge which is using another lambda to put message to CloudWatch logs
-stream.
+stream. For example S3 Event notification (create object) can trigger stream.
 Amazon EventBridge Overview and Integration with SaaS Applications
 https://explore.skillbuilder.aws/learn/course/119/play/457/amazon-eventbridge-overview-and-integration-with-saas-applications
 Amazon EventBridge is similar to cloudwatch events (deprecated), but with more
@@ -826,9 +930,6 @@ service httpd start
 
 # look for log on
 cat /var/log/cloud-init-output.log
-# if you are using AWS::Cloudformation::Init than it goes to
-cat /var/log/cfn-init.log
-cat /var/log/cfn-init-cmd.log
 ```
 
 ## SSM Automation
@@ -949,7 +1050,14 @@ AWS_SHARED_CREDENTIALS_FILE=~/.aws/credentials_duleorlovic aws s3 ls s3://my-trk
 ```
 
 
-You can extract data
+You can extract data with query to parse json for example
+Find other examples on `aws ec2 describe-instances help`
+TODO: add examples
+* `[*]` array
+* `.attribute`
+you can have `--output text`, `--output json` or `--output table`, or you can
+use `jq`
+
 ```
 # list all public instances, using * returns array of arrays
 aws ec2 describe-instances --query "Reservations[*].Instances[*].PublicIpAddress" --output=text
@@ -976,13 +1084,6 @@ aws ec2 describe-instances --region us-east-1 | jq -r '.Reservations[] | .OwnerI
 ]
 ```
 
-# Data lifecycle management
-
-DLM is used to create and delete EBS snapshots.
-
-EBS snapshots are incremental backups, so only the blocks that have changed are
-saved.
-
 # S3
 
 Objects storage (flat storage and each object has uuid) Scallable Simple Object
@@ -1006,8 +1107,8 @@ Path style URL https://s3.Region.amazonaws.com/bucket-name/key-name is
 deprecated.
 Object size max 5 TB (upload using console is 160GB). Number of objects is
 unlimited.
-For upload bigger than 100MB you should use multipart upload and
-AbortIncompleteMultipartUpload lifecycle rule
+For upload bigger than 100MB it is recommended (bigger than 5GB required) to use
+multipart upload and AbortIncompleteMultipartUpload lifecycle rule
 https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html
 Objects consits: key (uniq in bucket), version ID, value, access control info
 and metadata (like key value pairs, for example content-type, can not be changed
@@ -1047,9 +1148,12 @@ To enable static website hosting, you need to:
     ]
 }
   ```
-* if bucket contains objects that are not owned by byt the bucket owner, you
+* if bucket contains objects that are not owned by the bucket owner, you
   need object ACL access controll list that grants everyone read access
 
+Bucket policy is used to: grant public access to the bucket, force objects to be
+encrypted at upload, grant access to another account (cross acount, for example
+you do not have access to another user account, just put its arn in Principal).
 You can track costs by using AWS generated tag for cost allocation. This tag
 will appear in AWS Cost explorer, AWS Budgets (can send alarms for usage
 limits), AWS Cost and usage report.
@@ -1067,20 +1171,30 @@ asw s3 ls s3://mybucket
 ```
 
 To move data you should use Aws DataSync (migrating by syncing, not one step),
-Transfer Family. For streaming use Amazon Kinesis Data Streams and Firehose. For
-offline Snowcone, snowball and snowmobile (for exabytes). Most cost optimal is
-to transfer on premises data to multiple Snowball edge storage optimized devices
-and copy to Amazon S3 and create lifecycle policy to transition the data into
-AWS Glacier Currently, there is no way of uploading objects directly to S3
-Glacier using a Snowball Edge.
+Transfer Family is used when copying using network takes more than a week.
+For streaming use Amazon Kinesis Data Streams and Firehose.
+For offline: Snowcone (hdd), snowball edge (ssd) and snowmobile (for exabytes).
+Most cost optimal is to transfer on premises data to multiple Snowball edge
+storage optimized devices and copy to Amazon S3 and create lifecycle policy to
+transition the data into AWS Glacier Currently, there is no way of uploading
+objects directly to S3 Glacier using a Snowball Edge.
 https://aws.amazon.com/blogs/storage/using-aws-snowball-to-migrate-data-to-amazon-s3-glacier-for-long-term-storage/
 AWS SMS server migration service does not have relation to shownball edge
 (distractor).
 
 For hybrid service you can use Aws Direct Connect (dedicated network connection
-to AWS from on premise center) or aws Storage gateway (used to migrate data, ie
-store on premise-data in an existing amazon S3 bucket, ie mount as NTF to AWS).
-Those can not extend the VPC network.
+to AWS from on premise center) or AWS Storage gateway (used to connect data, ie
+store on premise-data in an existing amazon S3 bucket, ie mount as NTF which
+uses s3 file gateway - it is using s3 to store, but also the cache for local
+most used files).
+Those can not extend the VPC network. Use case could be: disaster recovery,
+backup, tiered storage, on-premises cache and low-latency file access.
+
+
+Amazon FSx is service to launch high performance file system to aws, for example
+smb or ntfs, and it is backedup daily to s3.
+FSx for Lustre (linux cluster) for machine learning, high performance computing
+hpc (ssd, hdd options) can be used on premises through vpn or direct connect.
 
 AWS Outposts is service that offers the same AWS infrastructure to any
 datacenter, so you can extend your VPC into the on-premises data center, and you
@@ -1117,49 +1231,31 @@ account owner. Other users can access using:
   aws s3 presign s3://my-trk-bucket/README.md --expires 60
   curl "https://my-trk-bucket.s3.us-east-1.amazonaws.com/README.md?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIARYNKJHQQAVHT4P5Q%2F20220706%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20220706T064501Z&X-Amz-Expires=60&X-Amz-SignedHeaders=host&X-Amz-Signature=2ff3afb8b8e0dcc308aaca2e49c94db3c83feaa26675ec35f4d29a47e4e8d7ae"
   ```
-* Bucket policy
 
-Bucket policy grant access to another account, user, role or service, it
-requires `Principal` property. You use Bucket policy when you do not have access
-to another account IAM policies, or IAM policies reaches the size limit.
-```
-{
-  "Id": "Policy1657042359891",
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "Stmt1657042353716",
-      "Action": [
-        "s3:ListBucket",
-        "s3:GetObject"
-      ],
-      "Effect": "Allow",
-      "Resource": "arn:aws:s3:::my-trk-bucket/*",
-      "Principal": {
-        "AWS": [
-          "arn:aws:iam::121153076256:user/admin"
-        ]
-      }
-    }
-  ]
-}
-```
-
+Storage classes:
 Default is S3 standard tier. There is S3 IA or one zone IA (infrequent access)
 you are charged for 128KB for object smaller than 128KB, or for 30days if you
-remove before 30days)
+remove before 30days). Use case is backup.
 
 Use Intelligent-Tiering Archive configurations under Properties tab on bucket,
 to minimize the cost: Archive Access tier (90days min, minutes to retrieve up to
 5 hours) or Deep archive access tier (180 days min, up to 5 hours to retreive).
 Object smaller than 128KB are always in frequent access tier.
 
-Glacier Instant retrieval (access once a quarter), Glacier Flexible retrieval
-(retrieval 1min to 12 hours), Glacier Deep Archive (access once or twice in
-year, retrieval 12-48hours).
+Glacier Instant retrieval (milisecond retrival, access once a quarter, min 90
+days), Glacier Flexible retrieval (retrieval 1min to 12 hours), Glacier Deep
+Archive (access once or twice in year, retrieval 12-48hours) min 180days.
+You need to initiate a restore and you can use `s3:ObjectRestore:Completed`
+event to send notification (you need to update SNS topic so s3 can send this).
+Vault are used to organize archive policies.
 
 For data that is not often accessed but requires high availability choose Amazon
 S3 standard IA.
+
+Durability is 11 nines, 99,999999999%, loss of 1 object for 10.000.000 objects
+every 10.000 years. That is the same for all storage classes
+Availability is 99.99% for s3 standard ie 53min a year. S3 Standard IA is 99.9%
+availability.
 
 Cost includes https://aws.amazon.com/s3/pricing/
 * storage price: based on storage class, eventual monthly monitoring fee
@@ -1174,13 +1270,55 @@ Enable bucket logs under Properties -> Server access logging, you can add
 prefix. It will log all GET requests, API calls.
 https://docs.aws.amazon.com/AmazonS3/latest/userguide/LogFormat.html
 It is advisable to create lifecycle rule under Management, to clear old logs.
-Use Athena to query logs
+Use Athena to serverless query logs
 https://aws.amazon.com/premiumsupport/knowledge-center/analyze-logs-athena/
+Create report with Amazon Quicksight to create Business intelligence BI
+dashboard.
+Use Glue service to convert csv to Apache Parquet or ORC, so data is stored as
+columnar data for cost saving (less scan). Use larger files > 128 MB.
 
 Object Lock using a write-once-read-many WORM model to prevent object from being
 deleted or overwritten. It can be enabled only during bucket creation. It
 enables versioning. You can configure Default retention mode so no users (or
 governance users) can delete or overwrite during that period (for example 1year)
+
+S3 replication Cross-region replication CRR (use case: low latency, compliance),
+Same-region replication SRR (log aggregation, live reproduction prod to test)
+Replication works only for new objects, for existing objects you need to use s3
+batch replication
+
+S3 object encryption: Server-side encryption sse is default, with sse-s3 key(you
+do not have access to the key, header: x-amz-server-side-encryption": "aes256")
+but you can use kms key sse-kms (you can see logs in cloudtrail, header:
+"x-amz-server-side-encryption": "aws:kms", you need to have access to kms key
+and kms limits are applied) or customer provided keys sse-c (we pass the key in
+header for each requests, when reading we need to send same key in header).
+Client-side encryption (data is encrypted before sending to s3).
+
+Encryption in flight, encryption in transit ssl/tls.
+
+Cross-origin resource sharing CORS , origin = scheme (protocol) + host (domain)
++ port. Web browsers mechanism to allow visiting other origins, only if other
+origin allow the request using CORS header Access-Control-Alow-Origin Browser
+sends `OPTIONS / Host: www.other.com Origin: www.main.com`, and we need to
+enable CORS for specific origin or for all origins.  CORS can not prevent
+scripts to download fiels, it is only a webbrowser security.
+https://docs.aws.amazon.com/AmazonS3/latest/userguide/ManageCorsUsing.html
+```
+[
+    {
+        "AllowedHeaders": [],
+        "AllowedMethods": [
+            "GET"
+        ],
+        "AllowedOrigins": [
+            "*"
+        ],
+        "ExposeHeaders": []
+    }
+]
+```
+
 
 # AWS CloudTrail
 
@@ -1392,16 +1530,18 @@ Parameters:
     Type: String
     Description: Security Group Description
 ```
-Use function `!Ref MyParameter` (or `Fn::Ref`). When we `!Ref` parameter then it
-returns paratemer value, and when we `!Ref` some resource then it returns
-physical ID of the underlying resource.
-You can `FN::GetAtt` to get attributes of the resources using dot syntax
+Use function `!Ref MyParameter` (or `"Fn::Ref":` in separate line). When we
+`!Ref` parameter then it returns paratemer value, and when we `!Ref` some
+resource then it returns physical ID of the underlying resource.  You can
+`"Fn::GetAtt":` to get attributes of the resources using dot syntax
 ```
 NewVolume:
   Properties:
     AvailabilityZone:
       !GetAtt EC2Instance.AvailabilityZone
 ```
+There is also `Fn::GetAZs: !Ref "AWS::Region"` which will return a list of all
+AZs so you can pick first using `!Select`
 
 You can create a string using join and delimiter
 ```
@@ -1438,15 +1578,22 @@ You can find return values in docs https://docs.aws.amazon.com/AWSCloudFormation
 
 ```
 Outputs:
+  StackRef:
+    Value: !Ref myStack
+
+  ServerIP:
+    Description: Server IP address
+    Value: !GetAtt MyInstance.PublicIp
+
+  OutputFromNestedStack:
+    Value: !GetAtt myStack.Outputs.WebsiteURL
+
   StackSSHSecurityGroup:
     Value: !Ref MyCompanySSHSecurityGroup
     Export:
       Name: SSHSecurityGroup
-  ServerIP:
-    Description: Server IP address
-    Value: !GetAtt MyInstance.PublicIp
 ```
-Example usage is `!ImportValue SSHSecurityGroup`
+Example usage for exported outputs is `!ImportValue SSHSecurityGroup`
 
 Conditions are used to create based on parameter value or mappings using logic
 functions: `!And`, `!Equals`, `!If`, `!Not`, `!Or`
@@ -1462,14 +1609,157 @@ Resources:
     Condition: CreateProdResources
 ```
 
+You can use cfn-init script instead of UserData since it is more readable.
+Also to be sure that stack is really working we can use WaitCondition so only
+after that signal the stack becomes CREATE_COMPLETE.
+So we use `Metadata:` and `AWS::Cloudformation::Init` to define what we want to
+install and from UserData we call `cfn-init` for our MyInstance, than call
+`cfn-signal` to send signal to `WaitCondition`.
+All logs go to `cat /var/log/cfn-init.log` and `/var/log/cfn-init-cmd.log`
+and `/var/log/cloud-init.log` and `/var/log/cloud-init-output.log`
+
+```
+Resources:
+  MyInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      UserData:
+        !Base64 |
+          !Sub |
+            #!/bin/bash -xe
+            # Get the latest CloudFormation package
+            yum update -y aws-cfn-bootstrap
+            # Start cfn-init from Metadata
+            /opt/aws/bin/cfn-init -s ${AWS::StackId} -r MyInstance --region ${AWS::Region} || error_exit 'Failed to run cfn-init'
+            # Start up the cfn-hup daemon to listen for changes to the EC2 instance metadata
+            /opt/aws/bin/cfn-hup || error_exit 'Failed to start cfn-hup'
+            # All done so signal success
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackId} --resource SampleWaitCondition --region ${AWS::Region}
+    Metadata:
+      Comment: Install a simple PHP application
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              httpd: []
+              php: []
+          files:
+            "/var/www/html/index.html":
+              ...
+  SampleWaitCondition:
+    Type: AWS::CloudFormation::WaitCondition
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT1M
+
+  # This will make sure it says CREATE_COMPLETE when all three instances are on
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      DesiredCapacity: "3"
+    CreationPolicy:
+      ResourceSignal:
+        Count: "3"
+        Timeout: PT15M
+```
+
+If Wait condition does not receive the required number of signals from ec2
+instance than it could be: AMI does not have AWS cloudformation helper script
+`aws-cfn-bootstrap` package, inspect logs by disabling rollback on failure
+(`OnFailure=DO_NOTHING` option while creating a stack), and check that instance
+has internet connectivity with `curl aws.amazon.com` (through NAT if it in
+private, or Internet gateway it is in public subnet - public means it has a
+route to IGW in route table anyway)
+
+Rollback means to back to previous known working state (it is was creation than
+everyting gets deleted) but you can enable option to keep other successfully
+created resources (after upload the template on Next there is `Preserve
+successfully provisioned resources` option)
+
+If someone delete resource, and we update that resource it for some reason
+update did not succedded, stack will gone into UPDATE_ROLLBACK_FAILED state. We
+can go to Stack Actions -> Continue update rollback and you can skip that
+missing resource or manually create it (with the same name) so it ends up in
+UPDATE_ROLLBACK_COMPLETE state and we can try to update again. We can use drift
+detection to see if we missed when we manually create the resource.
+When template is wrong and we want to create a stack than ROLLBACK_COMPLETE is
+state and we can not update this stack (we can only remove this stack).
+
+Another way to set up dependencies is to use dependon attribute
+```
+Resource:
+  Ec2Instance:
+    DependsOn: MyDB
+
+  MyDb:
+```
+
+Nested stacks is used when you isolate repeated components. We just need a
+template url and parameters that are used
+
+```
+Resources:
+  SSHSecurityGroupStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.amazonaws.com/cloudformation-bucket-common-mycorp/ssh-security-group.yaml
+      Parameters:
+        ApplicationName: !Ref AWS::StackName
+        VPCId: !Ref VPCId
+      TimeoutInMinutes: 5
+```
+
+ChangeSets are used to know what changes will be made (still do not know if it
+will be successfull). Change set is created on web for existing stacks.
+
+Cloudformation drift occurs when someone manually change resources created by
+cloudformation. Stack actions -> Detect drift.
+
+`DeletionPolicy` can be `Retain` (keep), `Snapshot` (keep the data), `Delete`
+(default) when we remove stack.
+```
+Resources:
+  myS3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+```
+Beside createpolicy CreationPolicy deletepolicy DeletionPolicy there is also
+UpdatePolicy which can set `AutoScalingRollingUpdate` with
+`MinInstancesInService: "1"` and `MaxBatchSize: "2"` so we update 2 and keep 1
+(keeps existing auto scalling group).
+Or there is `AutoScalingReplacingUpdate` with `WillReplace: "true"` (create new
+auto scalling group).
+
+But if you want to prevent Stack to be deleted, you can enable
+TerminationProtection by Action -> Edit termination protection.
+
 Use StackSet to provision across multiple accounts and regions (for example
-deploy IAM role in each account).
+deploy IAM role in each account). Stack sets requires specific iam roles
+
+Use Stack Policies to determine which resource can be updated. It is defined in
+separate json file and uploaded on web on Next page while creating stack.
+Action denied by stack policy error will be shown.
+```
+{
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": "Update:*",
+      "Principal": "*",
+      "Resource": "*"
+    },
+    {
+      "Effect": "Deny",
+      "Action": "Update:*",
+      "Principal": "*",
+      "Resource": "LogicalResourceId/MyInstance"
+    }
+  ]
+}
+```
 
 Use `resource import` to bring existing resource to CloudFormation.
 Prevent updates to critical resources by using a Stack policy.
-
-Change set ...
-
 
 AWS LightSail Use pre-configured development stacks like LAMP, Nginx, MEAN, and
 Node.js. to get online quickly and easily.
@@ -1570,10 +1860,6 @@ Cloudfront is content delivery network CDN.
 
 AWS Global Accelerator is a networking tool, so when network is congested, is
 optimizes the path to application.
-
-# Amazon QuickSight
-
-Business intelligence BI dashboard
 
 # AWS Glue
 
