@@ -298,11 +298,7 @@ VPC Interface Endpoints is creating elastic network interface (ENI with IP
 address) so you can use them to connect to external services using your own vpc
 private network.
 
-Aws Privatelink is used for a private, encrypted channel of communication
-between its on-premises data center and a VPC in the AWS Cloud
-
-
-To secure access you can use Network Access controll Network ACL and security
+To secure access you can use Network Access control Network ACL and security
 groups.
 Network ACL is stateless so you need to enable both inbound and outbound ports.
 By default it is allowing in and out all ports, but you can for example allow
@@ -385,8 +381,8 @@ Beside ON-demand instances which are most common (pay per second), you can use:
   convertible reserved instance when you need to exchange to another equal or
   greater configuration: instance family: type and size (m4.xlarge), operating
   system and tenancy (default/dedicated)
-* Dedicated Hosts: book entire physical server, controll instance placement,
-  more controll on hardware than dedicated instances
+* Dedicated Hosts: book entire physical server, control instance placement,
+  more control on hardware than dedicated instances
 * Dedicated Instances: no other customers will share your hadrware
 * Capacity Reservations: reserve capacity in specific AZ
 
@@ -787,9 +783,30 @@ EFS CloudWatch Metrics:
 - BurstCreditBalance
 - StorageBytes
 
-## AWS Databases
+## AWS Databases RDS
 
-RDS multi AZ deployment will use single DNS and it will automatically failover.
+Managed database service: postgres, mysql, mariadb, oracle, microsoft sql,
+aurora (aws proprietary database).
+RDS multi AZ deployment will use single DNS and it will automatically failover
+in case disaster recovery DR (those standby instance becomes master instance).
+Failover happens when primary db instance: failed, OS is undergoing software
+patching, unreachable due to loss of network connectivity, modified eg db
+instance type changes, busy and unresponsive, underlying storage failure, or AZ
+outage happens, or manually failover when you initiate Reboot with failover.
+Scalling vertical (bigger instance) and horizontal (add more read replicas).
+Read replicas can be setup as multi AZ for DR.
+Going from single AZ to multi AZ is single click, which creates standby
+instance in another AZ, with zero downtime.
+You can not access to underlying instance (no ssh except RDS Custom).
+Storage Auto Scaling feature, it will scale automatically until Maximum Storage
+Threshold (for example 10% is free, 6h from last scalling event). RDS Read
+replicas is up to 5 another rds replicas, same AZ, Cross AZ, Cross Region.
+
+Lambda can access only public RDS. For private RDS you need to start Lamda in
+VPC ie usine Elastic Network Interface ENI in your subnets.
+RDS proxy is used to manage connection pool and clean up iddle connections made
+by lambda functions, to avoud TooManyConnections exception.
+
 Database Type 	Use Cases	AWS Service
 Relational	Traditional applications, ERP, CRM, e-commerce	Amazon RDS, Amazon Aurora, Amazon Redshift (cloud data warehouse)
 Key-value	High-traffic web apps, e-commerce systems, gaming applications	Amazon DynamoDB In-memory Caching, session management, gaming leaderboards, geospatial applications Amazon ElastiCache for Memcached, Amazon ElastiCache for Redis
@@ -798,6 +815,51 @@ Wide column High-scale industrial apps for equipment maintenance, fleet manageme
 Graph Fraud detection, social networking, recommendation engines Amazon Neptune
 Time series IoT applications, DevOps, industrial telemetry Amazon Timestream
 Ledger Systems of record, supply chain, registrations, banking transactions Amazon QLDB
+
+RDS Parameter Groups: dynamic parameter are applied immediatelly, static params
+are applied after instance reboot.
+Force SSL: on postgres use `rds.force_ssl = 1`, on mysql `GRANT SELECT ON
+mydatabase.* TO 'myuser'@'%' IDENTIFIED BY 'asd' REQUIRE SSL;`.
+
+Backups are continuous, allow point in time recovery, happens during maintenance
+windows. Backups have a retention period you set between 0 (disabled) and 35
+days and can not be shared.
+Snapshot are incremental (only first snapshot is full). Snapshots takes IO and
+can stop the database from seconds to minutes. You can share manual snapshots
+with another account (automated snapshots needs to be copied). You can not share
+encrypted with AWS keys since you do not have access to those keys, only KMS
+encrypted and user need to have access to the key.
+RDS Events are changes to states like pending/running, parameter groups. You can
+send to SNS or EventBridge.
+RDS Database Log files and you can send to CW Logs (slow query logs)
+CW merics associated with RDS gathered from the hypervisor: DatabaseConnections,
+SwapUsage, ReadIOPS, WriteIOPS, ReadLatency/WriteLatency, DiskQueueDepth,
+FreeStorageSpace.
+Enhanced monitoring gathered from an agent on the db instance: threads, cpu,
+memory metrics.
+
+# Aurora
+
+Unparalleled high performance and availability at global scale compatible with
+MySQL and PostgeSQL.
+When primary instance of Amazon Auror cluster is unavailable, aurora promotes an
+existing replica in another AZ to a new primary instance automatically.
+Aurora master and up to 15 auto scalled read replicas, similar to RDS multiAZ.
+Storage is replicated, self healing auto expanding (10GB up to 128TB).
+Writer Endpoint, point always to the single master.
+Reader Endpoint, connection load balancing.
+Automatic failover, backtrack without using backups, but it is in-place
+restore, automatic backups and restore to a new db cluster, automated patching
+with zero downtime, advanced monitoring, aurora database cloning by using the
+same cluster volume and copy-on-write protocol eg create a test env from prod
+
+Aws Privatelink is used for a private, encrypted channel of communication
+between its on-premises data center and a VPC in the AWS Cloud
+
+# Amazon ElastiCache
+
+In memory database Redis or Memcached.
+Redis: multi AZ with auto failover
 
 # Amazon CloudWatch
 
@@ -886,7 +948,7 @@ be automatically recognized with the Session Manager.
 You can activate hybrid intance with script.
 
 It is usefull to remotelly run commands without need to open inbound ssh ports,
-and you can controll which commands can be performed and it is auditable.
+and you can control which commands can be performed and it is auditable.
 Free service.
 
 Command for cpu stress is: 
@@ -1088,7 +1150,8 @@ aws ec2 describe-instances --region us-east-1 | jq -r '.Reservations[] | .OwnerI
 
 Objects storage (flat storage and each object has uuid) Scallable Simple Object
 Storage S3. Buckets reside in region, but the name should be uniq across all
-buckets.
+buckets. It looks like that S3 is global service, but not, it is region based,
+and you need to choose in which region to put a bucket.
 
 Usage case is for: backups (EBS snapshot), media hosting, static websites.
 User can create up to 100 buckets (or 1000 by submitting a service limit
@@ -1105,7 +1168,7 @@ https://my.bucket.s3.us-east-1.amazonaws.com/my-file.txt
 Virtual hosted-style URL https://bucket-name.s3.Region.amazonaws.com/key-name
 Path style URL https://s3.Region.amazonaws.com/bucket-name/key-name is
 deprecated.
-Object size max 5 TB (upload using console is 160GB). Number of objects is
+MAX object size is 5TB (upload using console is 160GB). Number of objects is
 unlimited.
 For upload bigger than 100MB it is recommended (bigger than 5GB required) to use
 multipart upload and AbortIncompleteMultipartUpload lifecycle rule
@@ -1122,8 +1185,9 @@ https://my-bucket-name.s3.amazonaws.com/some/key-for-file.jpg
 htpps://my-bucket-name.s3-us-east-1.amazonaws.com/some/key-for-file.jpg
 (deprecated http:s//s3-us-east-1.amazonaws.com/my-bucket-name/key-for-file.jpg)
 
-S3 supports resource based access controll (using Access controll list ACL and
-bucket policy) and user based access controll.
+S3 supports resource based access control: using bucket policy or using Access
+control list ACL on object or bucket level.
+Also supports user based access control.
 
 To enable static website hosting, you need to:
 * enable static web hosting in bucket properties
@@ -1149,7 +1213,7 @@ To enable static website hosting, you need to:
 }
   ```
 * if bucket contains objects that are not owned by the bucket owner, you
-  need object ACL access controll list that grants everyone read access
+  need object ACL access control list that grants everyone read access
 
 Bucket policy is used to: grant public access to the bucket, force objects to be
 encrypted at upload, grant access to another account (cross acount, for example
@@ -1319,6 +1383,35 @@ https://docs.aws.amazon.com/AmazonS3/latest/userguide/ManageCorsUsing.html
 ]
 ```
 
+# Amazon Cloudfront
+
+Cloudfront is content delivery network CDN.
+400 point of presence in Global Edge network which are caching content and which
+are connected using aws backbone network
+https://aws.amazon.com/blogs/networking-and-content-delivery/400-amazon-cloudfront-points-of-presence/
+
+Difference with S3 cross region replication crr is that cloudfront is good for
+static files (TTL is a few days) available everywhere. CRR must be setup for
+each region, and files are upding in near real-time so good for dynamic content.
+
+When you enable Cloudfront, you do not need to enable public access for your
+bucket, but you need to attach policy that give access to Cloudfront.
+
+You can enable Geographic Restrictions, and select countries in which your
+content is available.
+
+Access Logs can generate reports on: Cache Statistics, popular objects, top
+referrers, usage, viewers.
+
+
+Error codes from origin server 5xx or from S3 4xx are cached also, for example
+user do not have access to the underlying bucket 403, or object not found 404.
+
+Cache based on Headers, Session Cookies, Query String Parameters.
+Expires or better is Cache-Control: max-age header.
+
+AWS Global Accelerator is a networking tool, so when network is congested, is
+optimizes the path to application.
 
 # AWS CloudTrail
 
@@ -1820,13 +1913,6 @@ Set of principles/pillars:
 Agility is all about speed (experiment quickly), and not about autoscale or
 elimination of wasted capacity.
 
-# Aurora
-
-Unparalleled high performance and availability at global scale compatible with
-MySQL and PostgeSQL.
-When primary instance of Amazon Auror cluster is unavailable, aurora promotes an
-existing replica in another AZ to a new primary instance automatically.
-
 # Amazon detective
 
 Intrusion detection using cloudtrail logs, vpc flow logs , amazon guardduty, eks
@@ -1853,13 +1939,6 @@ uninstended network access
 
 NoSQL database with automatic backup and restore, SLA 99.999%, optimize costs
 with automatic scales up and down.
-
-# Amazon Cloudfront
-
-Cloudfront is content delivery network CDN.
-
-AWS Global Accelerator is a networking tool, so when network is congested, is
-optimizes the path to application.
 
 # AWS Glue
 
