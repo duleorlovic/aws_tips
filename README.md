@@ -17,10 +17,23 @@ udemy.com courses
 * Practice Exams: AWS Certified SysOps Administrator Associate https://www.udemy.com/course/practice-exams-aws-certified-sysops-administrator-associate/
 
 
-To test on AWS you can create new Organization asd@email.com so the test does
-not affect much (except billing:) your account. After you sign in as root
-(username is asd@email.com), create IAM account alias trkasd so all IAM users
-can log in on https://trkasd.signin.aws.amazon.com/console
+To test on AWS you can create new Organizations asd@email.com so the test does
+not affect much (except billing:) your account. Your account is management
+account and all other accounts (member accounts) can only be part of one
+organization. Benefits: volume discount, shared reserved instances and savings
+plans discounts across accounts. Each Organization Units OU is separated VPC,
+but we can establish single CloudTrail logs.
+Service Control Policies SCP are policies for memeber accounts (management
+account is not affected by scp) can be used to deny services to other OUs.
+In IAM policy you can use `aws:PrincipalOrgId` to allow principals from any OU.
+
+User Control tower service to automate setup of multi account aws with a best
+practices, govern a secure and compliant multi-account environment. It runs on
+top of AWS Organizations. Detect policy violations and remediate them.
+
+After you sign in as root (username is asd@email.com), create IAM account alias
+trkasd so all IAM users can log in on
+https://trkasd.signin.aws.amazon.com/console
 You should enable MFA (you can do in emulator by installing Google Authenticator
 and inserting security code)
 create IAM user with AdministratorAccess and use that
@@ -28,11 +41,21 @@ IAM user for all following tasks (create other IAM users, instances...)
 
 # Billing
 
-Use consolidated billing for aws organizations to see combined usage, share
+Use consolidated billing for Aws Organizations to see combined usage, share
 volume pricing discount, receive single bill for multiple accounts.
 You should enabled Budget alerts on
 https://us-east-1.console.aws.amazon.com/billing/home#/budgets/overview
 so you receive email when forecasted cost is greater than for example $10.
+First two budgets are free.
+Similar to Cloudwatch Billing alerts (available only on us-east-1, deprecated
+since it is only using actual spend) but more granular, and can filter by
+service, by tags, and alerts by forecasted cost.
+
+You can enable Cost Allocation Tags so when you tag resources, you can filter by
+those tags in Cost Explorer. By default you can use group by dimension Service,
+but you can also group by Cost allocation tag. You can filter also.
+Cost and Usage Reports are most comprehensive set of AWS cost and usage data
+available. AWS Compute Optimizer used to reduce cost and improve perfomance.
 
 # IAM Identity and access management
 
@@ -537,6 +560,7 @@ traffic.
 SSL is Secure Sockets Layer, newer version is TLS Transport Layer Security are
 issues by CA Certificate Authorities (Letsencrypt, GoDaddy...). ALB is SSL
 termination, it uses ACM Aws Certificate Manager to manage certs.
+
 HTTPS listeners can use default and multiple certs to support multiple domains.
 Different domains supported by SNI Server Name Indication, ALB pick correct SSL
 cert and route to target group for that domain.
@@ -821,14 +845,26 @@ are applied after instance reboot.
 Force SSL: on postgres use `rds.force_ssl = 1`, on mysql `GRANT SELECT ON
 mydatabase.* TO 'myuser'@'%' IDENTIFIED BY 'asd' REQUIRE SSL;`.
 
-Backups are continuous, allow point in time recovery, happens during maintenance
-windows. Backups have a retention period you set between 0 (disabled) and 35
-days and can not be shared.
+Backups are continuous, allow point in time recovery PITR happens during
+maintenance windows. Backups have a retention period you set between 0
+(disabled) and 35 days and can not be shared. Backup frequency eg daily.
+AWS Backup Vault Lock is used to apply archive policies, for example enforce
+WORK Write Once Read Many state, no body can delete backup. Backup plans can
+work on specific tags.
+
 Snapshot are incremental (only first snapshot is full). Snapshots takes IO and
 can stop the database from seconds to minutes. You can share manual snapshots
 with another account (automated snapshots needs to be copied). You can not share
 encrypted with AWS keys since you do not have access to those keys, only KMS
 encrypted and user need to have access to the key.
+AWS owned keys (free, default), AWS managed keys (free aws/service-name)
+KMS Customer-managed keys CMK can be rotated manually.
+Imported KMS keys only manual rotation using alias.
+MKS Key Policies are used to control access to KMS CMK. CloudTrail log is used
+to audit KMS key usage.  Symetric (one key to encrypt and descrypt). Asymetic
+(public is downloadable).
+
+
 RDS Events are changes to states like pending/running, parameter groups. You can
 send to SNS or EventBridge.
 RDS Database Log files and you can send to CW Logs (slow query logs)
@@ -1051,7 +1087,7 @@ aws ssm get-parameters-by-path --path /my-app/ --recursive
 
 ## AWS Secrets Manager
 
-It can rotate passwords, database credentials, api keys.
+It force rotate passwords, database credentials, api keys.
 It can store binaries.
 
 ## SSM State manager
@@ -1235,8 +1271,12 @@ asw s3 ls s3://mybucket
 ```
 
 To move data you should use Aws DataSync (migrating by syncing, not one step),
-Transfer Family is used when copying using network takes more than a week.
-For streaming use Amazon Kinesis Data Streams and Firehose.
+DataSync can sync with S3, EFS, FSx, keeps file permissions and metadata. Agent
+is running on schedule, daily weekly. Problem could be a slow internet
+connection. Transfer Family is used when copying using network takes more than a
+week, so we get a device with agent preinstalled, which pull the data into local
+storage and than we ship the device to aws. Sync can be between different
+services, or between different cloud providers.
 For offline: Snowcone (hdd), snowball edge (ssd) and snowmobile (for exabytes).
 Most cost optimal is to transfer on premises data to multiple Snowball edge
 storage optimized devices and copy to Amazon S3 and create lifecycle policy to
@@ -1245,6 +1285,7 @@ objects directly to S3 Glacier using a Snowball Edge.
 https://aws.amazon.com/blogs/storage/using-aws-snowball-to-migrate-data-to-amazon-s3-glacier-for-long-term-storage/
 AWS SMS server migration service does not have relation to shownball edge
 (distractor).
+For streaming use Amazon Kinesis Data Streams and Firehose.
 
 For hybrid service you can use Aws Direct Connect (dedicated network connection
 to AWS from on premise center) or AWS Storage gateway (used to connect data, ie
@@ -1311,7 +1352,6 @@ days), Glacier Flexible retrieval (retrieval 1min to 12 hours), Glacier Deep
 Archive (access once or twice in year, retrieval 12-48hours) min 180days.
 You need to initiate a restore and you can use `s3:ObjectRestore:Completed`
 event to send notification (you need to update SNS topic so s3 can send this).
-Vault are used to organize archive policies.
 
 For data that is not often accessed but requires high availability choose Amazon
 S3 standard IA.
@@ -1359,7 +1399,7 @@ and kms limits are applied) or customer provided keys sse-c (we pass the key in
 header for each requests, when reading we need to send same key in header).
 Client-side encryption (data is encrypted before sending to s3).
 
-Encryption in flight, encryption in transit ssl/tls.
+Encryption in flight ie encryption in transit ssl/tls.
 
 Cross-origin resource sharing CORS , origin = scheme (protocol) + host (domain)
 + port. Web browsers mechanism to allow visiting other origins, only if other
@@ -1390,19 +1430,20 @@ Cloudfront is content delivery network CDN.
 are connected using aws backbone network
 https://aws.amazon.com/blogs/networking-and-content-delivery/400-amazon-cloudfront-points-of-presence/
 
-Difference with S3 cross region replication crr is that cloudfront is good for
+Difference with S3 Cross Region Replication CRR is that cloudfront is good for
 static files (TTL is a few days) available everywhere. CRR must be setup for
 each region, and files are upding in near real-time so good for dynamic content.
 
 When you enable Cloudfront, you do not need to enable public access for your
 bucket, but you need to attach policy that give access to Cloudfront.
 
+You can use AWS Certificate Manager to obtain ssl certificates.
+
 You can enable Geographic Restrictions, and select countries in which your
 content is available.
 
 Access Logs can generate reports on: Cache Statistics, popular objects, top
 referrers, usage, viewers.
-
 
 Error codes from origin server 5xx or from S3 4xx are cached also, for example
 user do not have access to the underlying bucket 403, or object not found 404.
@@ -1492,11 +1533,12 @@ https://aws.amazon.com/blogs/security/how-to-use-aws-config-to-monitor-for-and-r
 Similar tools that check public access is enabled are:
 * Aws IAM Access Analyzer - check pubcket policy ACL and access point policy
 * AWS Trusted Advisor - check S3 bucket permissions, other Trudsted avisor
-  checks can include cost optimization, performance, security, fault tolerance.
-  For example security group created by Directory Service should not have
-  unrestricted access. Approaching limits.
-  Access advisor identify unnecessary permissions that have been assigned to
-  users
+  checks can include: Cost Optimization, Performance, Security, Fault Tolerance,
+  Service Limits. For example security group created by Directory Service should
+  not have unrestricted access. Approaching limits. Access advisor identify
+  unnecessary permissions that have been assigned to users. Also Cost
+  optiomization, under utilized EBS volumes, idle load balancers.
+  Free for core checks.
 
 Use S3 Storage Lens to optimize cost.
 
@@ -1564,7 +1606,9 @@ created from PodSpec. Runtime (Docker or containerd), kube-proxy and kubelet
 
 # AWS Elastic beanstalk
 
-AWS Service catalog is to manage infrastructure as code (IaC) templates.
+AWS Service Catalog is to manage infrastructure as code (IaC) templates, so user
+do not need to know each aws service, then do not even need to be logged in to
+aws. TagOptions can be applies so they user the same tags.
 AWS Elastic beanstalk is for deploys web applications.
 https://docs.aws.amazon.com/elasticbeanstalk/latest/dg/ruby-rails-tutorial.html#ruby-rails-tutorial-launch
 Each Beanstalk environment will generate: ec2, ALB, S3, ASG, CW alarm,
@@ -1917,23 +1961,39 @@ elimination of wasted capacity.
 
 Intrusion detection using cloudtrail logs, vpc flow logs , amazon guardduty, eks
 audit logs.
+
 GuardDuty monitors workloads for malicious activity.
 Amazon GuardDuty is a threat detection service that continuously monitors your
 AWS accounts and workloads for malicious activity and delivers detailed security
-findings for visibility and remediation.
+findings for visibility and remediation. It is looking for CloudTrail Events
+Logs, CloudTail Management Events, CloudTrail S3 Data Events (getObject), VPC
+Flow Logs (unusual IP address), DNS Logs. Public revealed keys.
+It has dedicated finding for CryptoCurrency attack.
 
 VPC flow logs capture information about ip traffic to and from network
 interfaces.
 
-Macie is used to detect sensitive data in S3 bucket.
+Macie is used to detect sensitive data in S3 bucket, eg identify Personally
+Identifieable Information PII.
 
-AWS Shield is managed DDos protection
+AWS Shield is managed DDos protection, enabled for free for each account.
+AWS Shield Advanced gives 24/7 support and aws bill reimbursement.
 
-AWS WAF prevent web application common web exploits, such as bot traffic, sql
-injection, cross site scripting xss
+AWS Web Application Firewall WAF prevent web application common web exploits,
+such as bot traffic, sql injection, cross site scripting xss. I can be used to
+block countries (geo-match), Web access control list ACL rules can also block
+specific ip, http headers, url strings. WAF is deployed to ALB, API gateway,
+CloudFront.
+Penetration Testing, aws customers are welcome to carry out security assessment
+againts 8 aws services: ec2, rds, cloudfront, aurora, api gateways, lambda,
+ligtsail, elastic beanstalk. but for other test are profibited: dod, flooding,
+dns zone walking on route 53.
 
-Amazon Inspector is for automated vulnerability detection and identify
-uninstended network access
+Amazon Inspector is for automated vulnerability detection. For ec2  identify
+unintended network access or OS vulnaerability using SSM agent, for ECR
+assessment of container images, for lambda vulnerabilities in function and
+package dependencies. Send finding to Amazon Event Bridge.
+Free for first 15 days.
 
 # Amazon DynamoDB
 
@@ -1959,16 +2019,15 @@ This is alternative to AWS SSM.
 
 AWS CloudHSM helps you meet corporate, contractual, and regulatory compliance
 requirements for data security.
-It uses a highly secure hardware storage device to store encryption keys
-
-User Control tower service to automate setup of multi account aws env, govern a
+It uses a highly secure hardware storage device to store encryption keys.
+KMS is configuring custom key store with cloudhsm.
 
 # Artifact
 
+Customers can download AWS compliance documentation and AWS agreements.
 Compliance portfolio for Payment card industry PCI, Service Organization Control
 SOC, NDA agreement, HIPPA, audit reports.
-
-secure, compliant.
+Can be used to support internal audit or compliance.
 
 # Amazon OpenSearch service
 
