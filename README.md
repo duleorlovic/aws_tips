@@ -1225,6 +1225,18 @@ S3 supports resource based access control: using bucket policy or using Access
 control list ACL on object or bucket level.
 Also supports user based access control.
 
+Static website is used for dns redirection, create bucket my.domain.com > on
+properties > enable static website hosting > check Redirect requests for an
+object > and use url in Host name.
+
+If slash is added to the end, you need to use workaround:
+https://repost.aws/knowledge-center/s3-static-website-url-trailing-slash
+create index.html.erb (touch index.html.erb) > upload
+Under bucket Permissions tab > disable Block all public access and add Bucket
+policy `s3:GetObject` as below.
+Index `index.html` object Properties > Metadata > Add new
+x-amz-website-redirect-location with value of redirect to url
+
 To enable static website hosting, you need to:
 * enable static web hosting in bucket properties
 * disable "Block public access" for the bucket (also on account level if needed)
